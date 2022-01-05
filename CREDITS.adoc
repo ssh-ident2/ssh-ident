@@ -1,0 +1,12 @@
+= Credits for ssh-ident [v1]
+
+== Original Author
+Project Page: https://github.com/ccontavalli/
+
+Author: Carlo Contavalli (ccontavalli@gmail.com)
+
+== ssh-ident Team
+Project Page: https://github.com/ssh-ident/
+
+.Members
+* Matthias Bücher, https://www.maddes.net/
