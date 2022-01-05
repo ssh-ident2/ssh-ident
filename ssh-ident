@@ -391,6 +391,24 @@ class SshIdentPrint(object):
       loglevel = LOG_INFO
 
     if ShouldPrint(self.config, loglevel):
+      if "prefix" in kwargs:
+        args = list(args)
+        args.insert(0, kwargs["prefix"])
+        args = tuple(args)
+        # make sure not to pass the prefix parameter to print
+        del kwargs["prefix"]
+      elif loglevel == LOG_DEBUG:
+        args = list(args)
+        args.insert(0, "[debug]")
+        args = tuple(args)
+      elif loglevel == LOG_ERROR:
+        args = list(args)
+        args.insert(0, "[ERROR]")
+        args = tuple(args)
+      elif loglevel == LOG_WARN:
+        args = list(args)
+        args.insert(0, "[Warn]")
+        args = tuple(args)
       self.python_print(*args, **kwargs)
 
   __call__ = write
