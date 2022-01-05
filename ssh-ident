@@ -156,14 +156,26 @@ To have multiple identities, all I have to do is:
     (r"opt/private", "secret"),
   ]
 
-  # If any of the ssh arguments have 'cweb' in it, the 'personal' identity
-  # has to be used. For example: "ssh myhost.cweb.com" will have cweb in
-  # argv, and the "personal" identity will be used.
-  # This is optional - don't include any MATCH_ARGV if you don't
-  # need it.
+  # Specifies which identity to use depending on the arguments I'm running
+  # ssh with. At first each element is separately tested against all patterns,
+  # then a string of all elements is tested against all patterns.
+  # This is optional - don't include any MATCH_ARGV if you don't need it.
+  # For example: If any of the ssh arguments have 'cweb' in it, the 'personal'
+  # identity has to be used. "ssh myhost.cweb.com" will have cweb in argv, and
+  # the "personal" identity will be used.
   MATCH_ARGV = [
     (r"cweb", "personal"),
     (r"corp", "work"),
+  ]
+  # Another example: Choose an identity for git depending on the accessed
+  # repository on GitHub (similar for GitLab, Bitbucket, etc.).
+  # Recognize the elements with the host and the repository path to switch
+  # between 'personal' and 'work' identity.
+  MATCH_ARGV = [
+    (r"\s(git@)?github\.com\s.*'company\/.+\.git'", "work"),
+    (r"\s(git@)?github\.com\s.*'ccontavalli\/.+\.git'", "personal"),
+    (r"\s(git@)?gist\.github\.com\s.*'abcdef01234567890fedcba912345678\.git'", "work"),
+    (r"^(git@)?(gist\.)?github\.com$", "personal"),
   ]
 
   # Note that if no match is found, the DEFAULT_IDENTITY is used. This is
@@ -295,6 +307,7 @@ derivate, you can now build debian packages.
 CREDITS
 =======
 
+- ssh-ident Team, https://github.com/ssh-ident/, main authors.
 - Carlo Contavalli, http://www.github.com/ccontavalli, main author.
 - Hubert depesz Lubaczewski, http://www.github.com/despez, support
   for using environment variables for configuration.
@@ -510,21 +523,40 @@ class Config(object):
     """Sets configuration option parameter to value."""
     self.values[parameter] = value
 
-def FindIdentityInList(elements, identities):
+def FindIdentityInList(elements, identities, all_elements, array_name):
   """Matches a list of identities to a list of elements.
 
   Args:
     elements: iterable of strings, arbitrary strings to match on.
     identities: iterable of (string, string), with first string
       being a regular expression, the second string being an identity.
+    all_elements: boolean if to check against string of all elements
+    array_name: name of the patterns array
 
   Returns:
     The identity specified in identities for the first regular expression
     matching the first element in elements.
   """
+  # Test against each element separately
   for element in elements:
+    index = 0
     for regex, identity in identities:
+      index += 1
       if re.search(regex, element):
+        print("Matching {0} #{1}: {2}".format(array_name, index, element),
+            file=sys.stderr,
+            loglevel=LOG_DEBUG)
+        return identity
+  # Test against all elements in a single string
+  if all_elements and len(elements) > 1:
+    element = " ".join(elements)
+    index = 0
+    for regex, identity in identities:
+      index += 1
+      if re.search(regex, element):
+        print("Matching {0} #{1}: {2}".format(array_name, index, element),
+            file=sys.stderr,
+            loglevel=LOG_DEBUG)
         return identity
   return None
 
@@ -541,8 +573,8 @@ def FindIdentity(argv, config):
   """
   paths = set([os.getcwd(), os.path.abspath(os.getcwd()), os.path.normpath(os.getcwd())])
   return (
-      FindIdentityInList(argv, config.Get("MATCH_ARGV")) or
-      FindIdentityInList(paths, config.Get("MATCH_PATH")) or
+      FindIdentityInList(argv, config.Get("MATCH_ARGV"), True, "MATCH_ARGV") or
+      FindIdentityInList(paths, config.Get("MATCH_PATH"), False, "MATCH_PATH") or
       config.Get("DEFAULT_IDENTITY"))
 
 def FindKeys(identity, config):
