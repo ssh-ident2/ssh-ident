@@ -1,3 +1,6 @@
 *~
 .*.sw?
 ssh-identc
+.venv*/
+__pycache__/
+*.pyc
