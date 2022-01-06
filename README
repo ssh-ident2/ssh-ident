@@ -4,7 +4,7 @@ NAME
     ssh-ident - Start and use ssh-agent and load identities as necessary.
 
 FILE
-    /opt/projects/ssh-ident.git/ssh-ident
+    ssh-ident
 
 DESCRIPTION
     Use this script to start ssh-agents and load ssh keys on demand,
@@ -510,7 +510,7 @@ FUNCTIONS
         Returns:
           string, the name of the identity to use.
 
-    FindIdentityInList(elements, identities)
+    FindIdentityInList(elements, identities, all_elements, array_name)
         Matches a list of identities to a list of elements.
 
         Args:
