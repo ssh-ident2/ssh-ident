@@ -27,9 +27,9 @@ DESCRIPTION
       actually need them, once. No matter how many terminals, ssh or login
       sessions you have, no matter if your home is shared via NFS.
 
-    - can prepare and use a different agent and different set of keys depending
-      on the host you are connecting to, or the directory you are using ssh
-      from.
+    - can prepare and use a different agent, different set of keys and different
+      ssh config file depending on the host you are connecting to, or the
+      directory you are using ssh from.
       This allows for isolating keys when using agent forwarding with different
       sites (eg, university, work, home, secret evil internet identity, ...).
       It also allows to use multiple accounts on sites like github, unfuddle
@@ -202,6 +202,7 @@ DESCRIPTION
 
       # This is optional - dont' include any SSH_OPTIONS if you don't
       # need it.
+      # Note that a separate ssh config file per identity is possible too.
       # Otherwise, provides options to be passed to 'ssh' for specific
       # identities.
       SSH_OPTIONS = {
@@ -245,6 +246,11 @@ DESCRIPTION
 
         # Generate keys to be used for work only, rsa
         $ ssh-keygen -t rsa -b 4096 -f ~/.ssh/identities/work/id_rsa
+
+    5) Optionally create a separate ssh config file for those identities that
+       need special ssh settings in general or for specific hosts:
+
+        $ ${EDITOR} ~/.ssh/identities/secret/config
 
         ...
 
