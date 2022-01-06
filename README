@@ -271,18 +271,79 @@ DESCRIPTION
          access only to the agent for the identity work, and the corresponding
          keys.
 
-    Note that ssh-ident needs to access both your private and public keys. Note
-    also that it identifies public keys by the .pub extension. All files in your
-    identities subdirectories will be considered keys.
+    Notes about key files:
+    ssh-ident needs to access both files of each key pair - private and public key.
+    Both files have to reside in the same directory.
+    All files in your identities subdirectories that match PATTERN_KEYS will be
+    considered key files (either private or public). If a different naming scheme
+    is used, then make sure that PATTERN_KEYS matches filenames for both types.
+    By default ssh-ident identifies public keys by the .pub extension or
+    a "public" inside the filename, while private keys have no explicit extension
+    or a "private" inside the filename. To recognize a key pair these specific name
+    parts are removed, the remaining filenames compared and connected if they match.
+    A key is only recognized and loaded if the key pair is complete.
+    The public key file is necessary to detect if a key is already loaded into
+    ssh-agent to avoid adding it again and therefore asking for password again.
+    If a public key file is missing check out the '-y' parameter of 'ssh-keygen'.
+    All patterns to detect key files in general plus public and private keys are
+    defined in lists, which can hold multiple regular expressions or simple
+    compare strings. The first match is taken and no further tests done.
+    Patterns are tested against the filename, not the full path.
 
-    If you want to only load keys that have "key" in the name, you can add
-    to your .ssh-ident:
+    The defaults of PATTERN_KEYS against the filename for the general key file
+    determination are:
 
-          PATTERN_KEYS = "key"
+          PATTERN_KEYS = [
+            r"^id_",
+            r"^identity",
+            r"^ssh[0-9]-",
+          ]
 
-    The default is:
+    The defaults of PATTERN_PUBKEYS and PATTERN_PRIVKEYS for the public and private
+    key determination are:
 
-          PATTERN_KEYS = r"/(id_.*|identity.*|ssh[0-9]-.*)"
+          PATTERN_PUBKEYS = [
+              [r"\.pub$", 0],
+              [r"public", 0],
+          ]
+          PATTERN_PRIVKEYS = [
+              [r"private", 0],
+              # Fallback for all remaining files.
+              [r"", None],
+          ]
+
+    Notes about PATTERN_PUBKEYS and PATTERN_PRIVKEYS:
+    ssh-ident first checks if the file is a public key, then if it is a private key.
+    The second parameter after the patterns defines which group to remove to
+    recognize key pairs. A zero (0) means remove the whole match. 'None' means do
+    not remove anything and leave filename as is.
+
+    If you want to only load keys that have "mykey" in their filename, you can
+    define in your .ssh-ident:
+
+          PATTERN_KEYS = [
+            "mykey",
+          ]
+
+    If you want to also load keys that have the extension ".key" or ".pub", then
+    you can define in your .ssh-ident:
+
+          PATTERN_KEYS = [
+            r"^id_",
+            r"^identity",
+            r"^ssh[0-9]-",
+            r"(\.key|\.pub)$",
+          ]
+          PATTERN_PRIVKEYS = [
+              [r"\.key$", 0],
+              [r"private", 0],
+              # Fallback for all remaining files.
+              [r"", None],
+          ]
+
+    Note: As the ".pub" and ".key" patterns come first, files that also have
+    "public" or "private" in their names may not match.
+
 
     You can also redefine:
 
