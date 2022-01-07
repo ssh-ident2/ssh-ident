@@ -107,10 +107,15 @@ DESCRIPTION
         ln -s /path/to/ssh-ident ~/bin/scp
         ln -s /path/to/ssh-ident ~/bin/sftp
 
+       It is not recommended to create symlinks for 'ssh-agent' and 'ssh-add'.
+
     2) Add a few more aliases in your .bashrc file, for example:
 
         alias scp='BINARY_SSH=scp /path/to/ssh-ident'
         alias rsync='BINARY_SSH=rsync /path/to/ssh-ident'
+        alias ssh-add="BINARY_SSH='ssh-add' "/path/to/ssh-ident""
+        alias ssh-agent="BINARY_SSH='ssh-agent' "/path/to/ssh-ident""
+
         ...
 
        The first alias will make the 'scp' command invoke 'ssh-ident' instead,
@@ -120,6 +125,13 @@ DESCRIPTION
        Note that aliases don't work from scripts - if you have any script that
        you expect to use with ssh-ident, you may prefer method 1), or you will
        need to update the script accordingly.
+
+       For the ssh-agent and ssh-add aliases the first parameter can be
+       '-i <identity>' to use them with a non-default identity.
+       Note that a new agent will not be created for an ssh-add call, and keys
+       will not be loaded for ssh-agent and ssh-add calls.
+
+       Additionally the identity can be defined via SSH_IDENT_ID='<identity>'.
 
     3) Use command specific methods to force them to use ssh-ident instead of
        ssh, for example:
@@ -435,18 +447,22 @@ CLASSES
      |  RunSSH(self, argv)
      |      Execs ssh with the specified arguments.
      |
-     |  __init__(self, identity, sshconfig, config)
+     |  __init__(self, identity, sshconfig, config, binary)
      |      Initializes an AgentManager object.
      |
      |      Args:
      |        identity: string, identity the ssh-agent managed by this instance of
      |            an AgentManager will control.
+     |        sshconfig: string, the path where ssh config file is kept.
      |        config: object implementing the Config interface, allows access to
      |            the user configuration parameters.
+     |        binary: string, ssh command for which to load the agent.
      |
      |      Attributes:
      |        identity: same as above.
      |        config: same as above.
+     |        ssh_config: same as above.
+     |        binary: same as above.
      |        agents_path: directory where the config of all agents is kept.
      |        agent_file: the config of the agent corresponding to this identity.
      |
@@ -460,12 +476,15 @@ CLASSES
      |  EscapeShellArguments(argv)
      |      Escapes all arguments to the shell, returns a string.
      |
-     |  GetAgentFile(path, identity)
+     |  GetAgentFile(path, identity, config, binary)
      |      Returns the path to an agent config file.
      |
      |      Args:
      |        path: string, the path where agent config files are kept.
      |        identity: string, identity for which to load the agent.
+     |        config: object implementing the Config interface, allows access to
+     |            the user configuration parameters.
+     |        binary: string, ssh command for which to load the agent.
      |
      |      Returns:
      |        string, path to the agent file.
@@ -473,7 +492,7 @@ CLASSES
      |  GetPublicKeyFingerprint(key)
      |      Returns the fingerprint of a public key as a string.
      |
-     |  IsAgentFileValid(agentfile)
+     |  IsAgentFileValid(agentfile, config)
      |      Returns true if the specified agentfile refers to a running agent.
      |
      |  RunShellCommand(command)
@@ -525,7 +544,7 @@ CLASSES
      |  ----------------------------------------------------------------------
      |  Data and other attributes defined here:
      |
-     |  defaults = {'BINARY_DIR': None, 'BINARY_SSH': None, 'DEFAULT_IDENTITY'...
+     |  defaults = {'BINARIES_ARGV1_IDENTITY': ['ssh-pageant', 'ssh-agent', 's...
 
     class SshIdentPrint(__builtin__.object)
      |  Wrapper around python's print function.
@@ -563,7 +582,7 @@ CLASSES
 
 FUNCTIONS
     AutodetectBinary(argv, config)
-        Detects the correct binary to run and sets BINARY_SSH accordingly,
+        Detects the correct binaries to run and sets BINARY_SSH* accordingly,
         if it is not already set.
 
     FindIdentity(argv, config)

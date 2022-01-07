@@ -102,10 +102,15 @@ to solve the problem:
     ln -s /path/to/ssh-ident ~/bin/scp
     ln -s /path/to/ssh-ident ~/bin/sftp
 
+   It is not recommended to create symlinks for 'ssh-agent' and 'ssh-add'.
+
 2) Add a few more aliases in your .bashrc file, for example:
 
     alias scp='BINARY_SSH=scp /path/to/ssh-ident'
     alias rsync='BINARY_SSH=rsync /path/to/ssh-ident'
+    alias ssh-add="BINARY_SSH='ssh-add' \"/path/to/ssh-ident\""
+    alias ssh-agent="BINARY_SSH='ssh-agent' \"/path/to/ssh-ident\""
+
     ...
 
    The first alias will make the 'scp' command invoke 'ssh-ident' instead,
@@ -115,6 +120,13 @@ to solve the problem:
    Note that aliases don't work from scripts - if you have any script that
    you expect to use with ssh-ident, you may prefer method 1), or you will
    need to update the script accordingly.
+
+   For the ssh-agent and ssh-add aliases the first parameter can be
+   '-i <identity>' to use them with a non-default identity.
+   Note that a new agent will not be created for an ssh-add call, and keys
+   will not be loaded for ssh-agent and ssh-add calls.
+
+   Additionally the identity can be defined via SSH_IDENT_ID='<identity>'.
 
 3) Use command specific methods to force them to use ssh-ident instead of
    ssh, for example:
@@ -523,8 +535,22 @@ class Config(object):
           [r"", None],
       ],
 
+      # List of binaries compatible with ssh's -F <config>
+      "BINARIES_SSH_CONFIG": ['ssh', 'scp', 'sftp', ],
       # How to identify ssh config files.
       "PATTERN_CONFIG": r"/config$",
+
+      # List of binaries compatible with ssh's -o[ ]BatchMode=...
+      "BINARIES_SSH_BATCHMODE": ['ssh', 'scp', ],
+
+      # List of binaries with virtual first parameter -i <identity> via ssh-ident
+      "BINARIES_ARGV1_IDENTITY": ['ssh-pageant', 'ssh-agent', 'ssh-add', ],
+
+      # List of binaries to not load keys for
+      "BINARIES_NO_KEYS": ['ssh-pageant', 'ssh-agent', 'ssh-add', ],
+
+      # List of binaries to not create new agents for
+      "BINARIES_NO_NEW_AGENT": ['ssh-add', ],
 
       # Dictionary with identity as a key, automatically adds
       # the specified options to the ssh command run.
@@ -533,9 +559,16 @@ class Config(object):
       "SSH_DEFAULT_OPTIONS": "-oUseRoaming=no",
 
       # Complete path of full ssh binary to use. If not set, ssh-ident will
-      # try to find the correct binary in PATH.
+      # try to find the correct binary in BINARY_DIR if set, otherwise in PATH.
+      # BINARY_SSH is intended to be defined within commands from a shell, e.g. aliases.
       "BINARY_SSH": None,
       "BINARY_DIR": None,
+
+      # Complete path of additional ssh binaries to use. If not set, ssh-ident will
+      # try to find the correct binaries first in BINARY_DIR then in PATH.
+      # BINARY_SSH_* is intended to be defined within commands from a shell, e.g. aliases.
+      "BINARY_SSH_AGENT": None,
+      "BINARY_SSH_ADD": None,
 
       # Which identity to use by default if we cannot tell from
       # the current working directory and/or argv.
@@ -842,18 +875,22 @@ def GetSessionTty():
 class AgentManager(object):
   """Manages the ssh-agent for one identity."""
 
-  def __init__(self, identity, sshconfig, config):
+  def __init__(self, identity, sshconfig, config, binary):
     """Initializes an AgentManager object.
 
     Args:
       identity: string, identity the ssh-agent managed by this instance of
           an AgentManager will control.
+      sshconfig: string, the path where ssh config file is kept.
       config: object implementing the Config interface, allows access to
           the user configuration parameters.
+      binary: string, ssh command for which to load the agent.
 
     Attributes:
       identity: same as above.
       config: same as above.
+      ssh_config: same as above.
+      binary: same as above.
       agents_path: directory where the config of all agents is kept.
       agent_file: the config of the agent corresponding to this identity.
 
@@ -864,8 +901,9 @@ class AgentManager(object):
     self.identity = identity
     self.config = config
     self.ssh_config = sshconfig
+    self.binary = binary
     self.agents_path = os.path.abspath(config.Get("DIR_AGENTS"))
-    self.agent_file = self.GetAgentFile(self.agents_path, self.identity)
+    self.agent_file = self.GetAgentFile(self.agents_path, self.identity, self.config, self.binary)
 
   def LoadUnloadedKeys(self, keys):
     """Loads all the keys specified that are not loaded.
@@ -916,12 +954,12 @@ class AgentManager(object):
         self.identity, self.config.Get("SSH_ADD_DEFAULT_OPTIONS"))
     console = GetSessionTty()
     self.RunShellCommandInAgent(
-        self.agent_file, "ssh-add {0} {1}".format(options, keys),
+        self.agent_file, "{0} {1} {2}".format(self.config.Get("BINARY_SSH_ADD"), options, keys),
         stdout=console, stdin=console)
 
   def GetLoadedKeys(self):
     """Returns an iterable of strings, each the fingerprint of a loaded key."""
-    retval, stdout = self.RunShellCommandInAgent(self.agent_file, "ssh-add -l")
+    retval, stdout = self.RunShellCommandInAgent(self.agent_file, "{0} -l".format(self.config.Get("BINARY_SSH_ADD")))
     if retval != 0:
       return []
 
@@ -949,12 +987,15 @@ class AgentManager(object):
     return fingerprint
 
   @staticmethod
-  def GetAgentFile(path, identity):
+  def GetAgentFile(path, identity, config, binary):
     """Returns the path to an agent config file.
 
     Args:
       path: string, the path where agent config files are kept.
       identity: string, identity for which to load the agent.
+      config: object implementing the Config interface, allows access to
+          the user configuration parameters.
+      binary: string, ssh command for which to load the agent.
 
     Returns:
       string, path to the agent file.
@@ -971,22 +1012,28 @@ class AgentManager(object):
     # Use the hostname as part of the path just in case this is on NFS.
     agentfile = os.path.join(
         path, "agent-{0}-{1}".format(identity, socket.gethostname()))
-    if os.access(agentfile, os.R_OK) and AgentManager.IsAgentFileValid(agentfile):
+    if os.access(agentfile, os.R_OK) and AgentManager.IsAgentFileValid(agentfile, config):
       print("Agent for identity {0} ready".format(identity), file=sys.stderr,
           loglevel=LOG_DEBUG)
       return agentfile
 
+    if binary in config.Get("BINARIES_NO_NEW_AGENT"):
+      print("No new agent for identity {0} due to binary {1}".format(identity, binary), file=sys.stderr,
+        loglevel=LOG_ERROR)
+      sys.exit(1)
+      return None
+
     print("Preparing new agent for identity {0}".format(identity), file=sys.stderr,
         loglevel=LOG_DEBUG)
     retval = subprocess.call(
-        ["/usr/bin/env", "-i", "/bin/sh", "-c", "ssh-agent > {0}".format(agentfile)])
+        ["/usr/bin/env", "-i", "/bin/sh", "-c", "{0} > {1}".format(config.Get("BINARY_SSH_AGENT"), agentfile)])
     return agentfile
 
   @staticmethod
-  def IsAgentFileValid(agentfile):
+  def IsAgentFileValid(agentfile, config):
     """Returns true if the specified agentfile refers to a running agent."""
     retval, output = AgentManager.RunShellCommandInAgent(
-        agentfile, "ssh-add -l >/dev/null 2>/dev/null")
+        agentfile, "{0} -l >/dev/null 2>/dev/null".format(config.Get("BINARY_SSH_ADD")))
     if retval & 0xff not in [0, 1]:
       print("Agent in {0} not running".format(agentfile), file=sys.stderr,
           loglevel=LOG_DEBUG)
@@ -1006,6 +1053,9 @@ class AgentManager(object):
     """Runs a shell command with an agent configured in the environment."""
     command = ["/bin/sh", "-c",
                ". {0} >/dev/null 2>/dev/null; {1}".format(agentfile, command)]
+    print("RunShellCommandInAgent: {0}:".format(command),
+        file=sys.stderr,
+        loglevel=LOG_DEBUG)
     process = subprocess.Popen(command, stdin=stdin, stdout=stdout)
     stdout, stderr = process.communicate()
     return process.wait(), stdout
@@ -1027,8 +1077,10 @@ class AgentManager(object):
 
   def RunSSH(self, argv):
     """Execs ssh with the specified arguments."""
-    additional_flags = self.config.Get("SSH_OPTIONS").get(
-        self.identity, self.config.Get("SSH_DEFAULT_OPTIONS"))
+    additional_flags = ""
+    if self.binary in self.config.Get("BINARIES_SSH_CONFIG"): ## TODO: rework SSH_OPTIONS and SSH_DEFAULT_OPTIONS
+      additional_flags = self.config.Get("SSH_OPTIONS").get(
+          self.identity, self.config.Get("SSH_DEFAULT_OPTIONS"))
     if (self.ssh_config):
       additional_flags += " -F {0}".format(self.ssh_config)
 
@@ -1037,28 +1089,66 @@ class AgentManager(object):
         ". {0} >/dev/null 2>/dev/null; exec {1} {2} {3}".format(
             self.agent_file, self.config.Get("BINARY_SSH"),
             additional_flags, self.EscapeShellArguments(argv))]
+    print("RunSSH: {0}:".format(command),
+        file=sys.stderr,
+        loglevel=LOG_DEBUG)
     os.execv("/bin/sh", command)
 
 def AutodetectBinary(argv, config):
-  """Detects the correct binary to run and sets BINARY_SSH accordingly,
+  """Detects the correct binaries to run and sets BINARY_SSH* accordingly,
   if it is not already set."""
-  # If BINARY_SSH is set by the user, respect that and do nothing.
-  if config.Get("BINARY_SSH"):
-    print("Will run '{0}' as ssh binary - set by user via BINARY_SSH"
-          .format(config.Get("BINARY_SSH")), loglevel=LOG_DEBUG)
+  runtime_name = argv[0]
+  binary_runtime_name = os.path.basename(runtime_name)
+  binary_checks = {
+    "BINARY_SSH": [binary_runtime_name, 'ssh', ],
+    "BINARY_SSH_AGENT": ['ssh-agent', ],
+    "BINARY_SSH_ADD": ['ssh-add', ],
+  }
+
+  # If BINARY_SSH* is set by the user, respect that and do nothing.
+  for config_name in list(binary_checks.keys()):
+    binary_path = config.Get(config_name)
+    if binary_path:
+      print("Will run '{0}' as {1} binary - set by user via {2}"
+            .format(binary_path, binary_checks[config_name][-1], config_name), loglevel=LOG_DEBUG)
+      del binary_checks[config_name]
+  if not binary_checks:
     return
 
-  # If BINARY_DIR is set, look for the binary in this directory.
-  runtime_name = argv[0]
-  if config.Get("BINARY_DIR"):
-    binary_name = os.path.basename(runtime_name)
-    binary_path = os.path.join(config.Get("BINARY_DIR"), binary_name)
-    if not os.path.isfile(binary_path) or not os.access(binary_path, os.X_OK):
-      binary_path = os.path.join(config.Get("BINARY_DIR"), "ssh")
+  # If BINARY_DIR is set, look for the binaries in this directory.
+  binary_path_base = config.Get("BINARY_DIR")
+  if binary_path_base:
+    for config_name in list(binary_checks.keys()):
+      for binary_name in binary_checks[config_name]:
+        binary_path = os.path.join(binary_path_base, binary_name)
+        if not os.path.isfile(binary_path) or not os.access(binary_path, os.X_OK):
+          continue
+        #
+        config.Set(config_name, binary_path)
+        print("Will run '{0}' as {1} binary - detected based on BINARY_DIR"
+              .format(binary_path, binary_checks[config_name][-1]), loglevel=LOG_DEBUG)
+        del binary_checks[config_name]
+        break
+    if "BINARY_SSH" in binary_checks:
+      binary_names = ""
+      for binary_name in binary_checks["BINARY_SSH"]:
+        if binary_name:
+          binary_names += "{0}'{1}'".format("," if binary_names else "", binary_name)
+          break
+      #
+      message = textwrap.dedent("""\
+      ssh-ident was invoked in place of the binary {0} (determined from argv[0]).
+      None of {1} could be found executable in BINARY_DIR.
 
-    config.Set("BINARY_SSH", binary_path)
-    print("Will run '{0}' as ssh binary - detected based on BINARY_DIR"
-          .format(config.Get("BINARY_SSH")), loglevel=LOG_DEBUG)
+        BINARY_DIR="{2}"
+
+      You need to adjust your setup for ssh-ident to work: consider setting
+      BINARY_DIR or BINARY_SSH plus BINARY_SSH_AGENT plus BINARY_SSH_ADD in
+      your config, or running ssh-ident some other way.\
+      """)
+      print(message.format(runtime_name, binary_names, binary_path_base), loglevel=LOG_ERROR)
+      sys.exit(255)
+  if not binary_checks:
     return
 
   # argv[0] could be pretty much anything the caller decides to set
@@ -1080,7 +1170,6 @@ def AutodetectBinary(argv, config):
   #
   # Note also that users may not be relying on having ssh-ident in the
   # PATH at all - for example, with "rsync -e '/path/to/ssh-ident' ..."
-  binary_name = os.path.basename(runtime_name)
   ssh_ident_path = ""
   if not os.path.dirname(runtime_name):
     message = textwrap.dedent("""\
@@ -1091,10 +1180,12 @@ def AutodetectBinary(argv, config):
       PATH="{1}"
 
     This may result in a loop, with 'ssh-ident' trying to run itself.
-    It is recommended that you set BINARY_SSH, BINARY_DIR, or run
-    ssh-ident differently to prevent this problem.""")
+    It is recommended that you set BINARY_DIR, or BINARY_SSH plus
+    BINARY_SSH_AGENT plus BINARY_SSH_ADD, or run ssh-ident differently
+    to prevent this problem.\
+    """)
     print(message.format(runtime_name, os.environ['PATH']),
-          loglevel=LOG_INFO)
+          loglevel=LOG_WARN)
   else:
     ssh_ident_path = os.path.abspath(os.path.dirname(runtime_name))
 
@@ -1110,28 +1201,40 @@ def AutodetectBinary(argv, config):
   search_path = os.pathsep.join([
       p for p in normalized_path if p != ssh_ident_path])
 
-  # Find an executable with the desired name.
-  binary_path = shutil.which(binary_name, path=search_path)
-  if not binary_path:
-    # Nothing found. Try to find something named 'ssh'.
-    binary_path = shutil.which('ssh')
+  for config_name in list(binary_checks.keys()):
+    for binary_name in binary_checks[config_name]:
+      # Find an executable with the desired name.
+      binary_path = shutil.which(binary_name, path=search_path)
+      if not binary_path:
+        continue
+      #
+      config.Set(config_name, binary_path)
+      print("Will run '{0}' as {1} binary - detected from argv[0] and $PATH"
+            .format(config.Get(config_name), binary_checks[config_name][-1]), loglevel=LOG_DEBUG)
+      del binary_checks[config_name]
+      break
+  if not binary_checks:
+    return
 
-  if binary_path:
-    config.Set("BINARY_SSH", binary_path)
-    print("Will run '{0}' as ssh binary - detected from argv[0] and $PATH"
-          .format(config.Get("BINARY_SSH")), loglevel=LOG_DEBUG)
-  else:
-    message = textwrap.dedent("""\
-    ssh-ident was invoked in place of the binary {0} (determined from argv[0]).
-    Neither this binary nor 'ssh' could be found in $PATH.
+  binary_names = ""
+  for config_name in list(binary_checks.keys()):
+    for binary_name in binary_checks[config_name]:
+      if binary_name:
+        binary_names += "{0}'{1}'".format("," if binary_names else "", binary_name)
+        break
+  #
+  message = textwrap.dedent("""\
+  ssh-ident was invoked in place of the binary {0} (determined from argv[0]).
+  None of {1} could be found in $PATH.
 
-      PATH="{1}"
+    PATH="{2}"
 
-    You need to adjust your setup for ssh-ident to work: consider setting
-    BINARY_SSH or BINARY_DIR in your config, or running ssh-ident some
-    other way.""")
-    print(message.format(argv[0], os.environ['PATH']), loglevel=LOG_ERROR)
-    sys.exit(255)
+  You need to adjust your setup for ssh-ident to work: consider setting
+  BINARY_DIR or BINARY_SSH plus BINARY_SSH_AGENT plus BINARY_SSH_ADD in
+  your config, or running ssh-ident some other way.\
+  """)
+  print(message.format(runtime_name, binary_names, os.environ['PATH']), loglevel=LOG_ERROR)
+  sys.exit(255)
 
 def ParseCommandLine(argv, config):
   """Parses the command line parameters in argv
@@ -1139,15 +1242,23 @@ def ParseCommandLine(argv, config):
   # This function may need a lot of refactoring if it is ever used for more
   # than checking for BatchMode for OpenSSH...
   binary = os.path.basename(config.Get("BINARY_SSH"))
-  if binary == 'ssh' or binary == 'scp':
+  extra = {}
+
+  if binary in config.Get("BINARIES_ARGV1_IDENTITY"):
+    if len(argv) > 1 and argv[1] == '-i':
+      extra["identity"] = argv[2]
+      del argv[2]
+      del argv[1]
+
+  if binary in config.Get("BINARIES_SSH_BATCHMODE"):
     # OpenSSH accepts -o Options as well as -oOption,
     # so let's convert argv to the latter form first
     i = iter(argv)
     argv = [p+next(i, '') if p == '-o' else p for p in i]
-    # OpenSSH accepts 'Option=yes' and 'Option yes', 'true' instead of 'yes'
-    # and treats everything case-insensitive
-    # if an option is given multiple times,
-    # OpenSSH considers the first occurrence only
+    # OpenSSH accepts 'Option=yes' and 'Option yes', plus 'true'/'false'
+    # instead of 'yes'/'no' and treats everything case-insensitive.
+    # If an option is given multiple times,
+    # OpenSSH considers the first occurrence only.
     re_batchmode = re.compile(r"-oBatchMode[= ](yes|true)", re.IGNORECASE)
     re_nobatchmode = re.compile(r"-oBatchMode[= ](no|false)", re.IGNORECASE)
     for p in argv:
@@ -1157,6 +1268,8 @@ def ParseCommandLine(argv, config):
       elif re.match(re_nobatchmode, p):
         config.Set("SSH_BATCH_MODE", False)
         break
+
+  return binary, extra
 
 def main(argv):
   # Replace stdout and stderr with /dev/tty, so we don't mess up with scripts
@@ -1186,22 +1299,50 @@ def main(argv):
   if binary_path == ssh_ident_path:
     message = textwrap.dedent("""\
     ssh-ident found '{0}' as the next command to run.
-    Based on argv[0] ({1}), it seems like this will create a
-    loop.
+    Based on argv[0] ({1}), it seems like this will create a loop.
 
-    Please use BINARY_SSH, BINARY_DIR, or change the way
-    ssh-ident is invoked (eg, a different argv[0]) to make
-    it work correctly.""")
+    Please use BINARY_DIR, or BINARY_SSH plus BINARY_SSH_AGENT plus
+    BINARY_SSH_ADD, or change the way ssh-ident is invoked
+    (eg, a different argv[0]) to makeit work correctly.\
+    """)
     print(message.format(config.Get("BINARY_SSH"), argv[0]), loglevel=LOG_ERROR)
     sys.exit(255)
-  ParseCommandLine(argv, config)
-  identity = FindIdentity(argv, config)
-  keys = FindKeys(identity, config)
-  sshconfig = FindSSHConfig(identity, config)
-  agent = AgentManager(identity, sshconfig, config)
 
-  if not config.Get("SSH_BATCH_MODE"):
-    # do not load keys in BatchMode
+  # Parse command line and handle special cases (OpenSSH batch mode, virtual parameters, etc.).
+  binary, extra = ParseCommandLine(argv, config)
+
+  # Determine identity.
+  identity = None
+  if "SSH_IDENT_ID" in os.environ:
+    identity = os.environ["SSH_IDENT_ID"]
+    print("Identity via SSH_IDENT_ID: {0}".format(identity),
+        file=sys.stderr,
+        loglevel=LOG_DEBUG)
+  elif "identity" in extra:
+    identity = extra["identity"]
+    print("Identity via parameter: {0}".format(identity),
+        file=sys.stderr,
+        loglevel=LOG_DEBUG)
+  else:
+    identity = FindIdentity(argv, config)
+    print("Identity via match: {0}".format(identity),
+        file=sys.stderr,
+        loglevel=LOG_DEBUG)
+
+  # Determine keys.
+  keys = None
+  if not binary in config.Get("BINARIES_NO_KEYS"):
+    keys = FindKeys(identity, config)
+
+  # Determine ssh config.
+  sshconfig = False
+  if binary in config.Get("BINARIES_SSH_CONFIG"):
+    sshconfig = FindSSHConfig(identity, config)
+
+  # Get/create agent manager, load keys and run the ssh command.
+  agent = AgentManager(identity, sshconfig, config, binary)
+  if keys and not config.Get("SSH_BATCH_MODE"):
+    # Load keys when not in BatchMode
     agent.LoadUnloadedKeys(keys)
   return agent.RunSSH(argv[1:])
 
