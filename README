@@ -241,6 +241,22 @@ DESCRIPTION
       # keys from remaining in memory for too long.
       SSH_ADD_DEFAULT_OPTIONS = "-t 7200"
 
+      # This is optional - don't include any SSH_AGENTS or SSH_ADDS if you
+      # don't need it. Defaults are 'ssh-agent' and 'ssh-add'.
+      # Otherwise, provides ssh-agent/ssh-add binary to use for key handling
+      # of specific identities. First fitting entry wins.
+      # Those binaries most be compatible to OpenSSH's implementation.
+      # First element is a list of identities and second element is the
+      # ssh-agent/ssh-add binary name.
+      # An empty list means for all identities.
+      "SSH_AGENTS" = [
+        [ ['work', 'work2', ], "other-ssh-agent"],
+        [ ['secret', ], "ssh-pageant"],
+      ],
+      "SSH_ADDS" = [
+        [ ['work1', 'work2', ], "other-ssh-add"],
+      ],
+
       # Output verbosity
       # valid values are: LOG_ERROR, LOG_WARN, LOG_INFO, LOG_DEBUG
       VERBOSITY = LOG_INFO
@@ -586,7 +602,7 @@ CLASSES
      |      list of weak references to the object (if defined)
 
 FUNCTIONS
-    AutodetectBinary(argv, config)
+    AutodetectBinary(runtime_name, config, binary_checks)
         Detects the correct binaries to run and sets BINARY_SSH* accordingly,
         if it is not already set.
 
@@ -676,7 +692,7 @@ FUNCTIONS
         This function returns an open file if the session has an usable terminal,
         None otherwise.
 
-    ParseCommandLine(argv, config)
+    ParseCommandLine(argv, config, binary)
         Parses the command line parameters in argv
         and modifies config accordingly.
 

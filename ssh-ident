@@ -236,6 +236,22 @@ To have multiple identities, all I have to do is:
   # keys from remaining in memory for too long.
   SSH_ADD_DEFAULT_OPTIONS = "-t 7200"
 
+  # This is optional - don't include any SSH_AGENTS or SSH_ADDS if you
+  # don't need it. Defaults are 'ssh-agent' and 'ssh-add'.
+  # Otherwise, provides ssh-agent/ssh-add binary to use for key handling
+  # of specific identities. First fitting entry wins.
+  # Those binaries most be compatible to OpenSSH's implementation.
+  # First element is a list of identities and second element is the
+  # ssh-agent/ssh-add binary name.
+  # An empty list means for all identities.
+  "SSH_AGENTS" = [
+    [ ['work', 'work2', ], "other-ssh-agent"],
+    [ ['secret', ], "ssh-pageant"],
+  ],
+  "SSH_ADDS" = [
+    [ ['work1', 'work2', ], "other-ssh-add"],
+  ],
+
   # Output verbosity
   # valid values are: LOG_ERROR, LOG_WARN, LOG_INFO, LOG_DEBUG
   VERBOSITY = LOG_INFO
@@ -597,6 +613,20 @@ class Config(object):
       # ssh-add default options. By default, don't keep a key longer
       # than 2 hours.
       "SSH_ADD_DEFAULT_OPTIONS": "-t 7200",
+
+      # List with multiple identities as key, that defines the ssh-agent/ssh-add
+      # binary to handle keys with (first fitting entry wins).
+      # Those binaries most be compatible to OpenSSH's implementation.
+      # First element is a list of identities and second element is the
+      # ssh-agent/ssh-add binary name.
+      # An empty list means for all identities.
+      # Hard-coded defaults are 'ssh-agent' and 'ssh-add'.
+      "SSH_AGENTS": [
+        #[ ['id1', 'id2', ], "other-ssh-agent"],
+      ],
+      "SSH_ADDS": [
+        #[ ['id1', 'id2', ], "other-ssh-add"],
+      ],
 
       # Like BatchMode in ssh, see man 5 ssh_config.
       # In BatchMode ssh-ident will not print any output and not ask for
@@ -1141,16 +1171,9 @@ class AgentManager(object):
         loglevel=LOG_DEBUG)
     os.execv("/bin/sh", command)
 
-def AutodetectBinary(argv, config):
+def AutodetectBinary(runtime_name, config, binary_checks):
   """Detects the correct binaries to run and sets BINARY_SSH* accordingly,
   if it is not already set."""
-  runtime_name = argv[0]
-  binary_runtime_name = os.path.basename(runtime_name)
-  binary_checks = {
-    "BINARY_SSH": [binary_runtime_name, 'ssh', ],
-    "BINARY_SSH_AGENT": ['ssh-agent', ],
-    "BINARY_SSH_ADD": ['ssh-add', ],
-  }
 
   # If BINARY_SSH* is set by the user, respect that and do nothing.
   for config_name in list(binary_checks.keys()):
@@ -1283,12 +1306,11 @@ def AutodetectBinary(argv, config):
   print(message.format(runtime_name, binary_names, os.environ['PATH']), loglevel=LOG_ERROR)
   sys.exit(255)
 
-def ParseCommandLine(argv, config):
+def ParseCommandLine(argv, config, binary):
   """Parses the command line parameters in argv
   and modifies config accordingly."""
   # This function may need a lot of refactoring if it is ever used for more
   # than checking for BatchMode for OpenSSH...
-  binary = os.path.basename(config.Get("BINARY_SSH"))
   extra = {}
 
   if binary in config.Get("BINARIES_ARGV1_IDENTITY"):
@@ -1316,7 +1338,7 @@ def ParseCommandLine(argv, config):
         config.Set("SSH_BATCH_MODE", False)
         break
 
-  return binary, extra
+  return extra
 
 def main(argv):
   # Replace stdout and stderr with /dev/tty, so we don't mess up with scripts
@@ -1332,7 +1354,13 @@ def main(argv):
   global print
   print = SshIdentPrint(config)
 
-  AutodetectBinary(argv, config)
+  # Autodetect BINARY_SSH.
+  # Either explicitily defined, ssh-ident as wrapper or fallback to ssh.
+  binary_checks = {
+    "BINARY_SSH": [os.path.basename(argv[0]), 'ssh', ],
+  }
+  AutodetectBinary(argv[0], config, binary_checks)
+  del binary_checks
   # Check that BINARY_SSH is not ssh-ident.
   # This can happen if the user sets a binary name only (e.g. 'scp') and a
   # symlink with the same name was set up.
@@ -1354,9 +1382,11 @@ def main(argv):
     """)
     print(message.format(config.Get("BINARY_SSH"), argv[0]), loglevel=LOG_ERROR)
     sys.exit(255)
+  #
+  binary = os.path.basename(config.Get("BINARY_SSH"))
 
   # Parse command line and handle special cases (OpenSSH batch mode, virtual parameters, etc.).
-  binary, extra = ParseCommandLine(argv, config)
+  extra = ParseCommandLine(argv, config, binary)
 
   # Determine identity.
   identity = None
@@ -1375,6 +1405,26 @@ def main(argv):
     print("Identity via match: {0}".format(identity),
         file=sys.stderr,
         loglevel=LOG_DEBUG)
+
+  # Autodetect BINARY_SSH_AGENT and BINARY_SSH_ADD.
+  # Either explicitily defined, defined per identity or default to ssh-agent/ssh-add.
+  binary_checks = {
+    "BINARY_SSH_AGENT": ['ssh-agent', ],
+    "BINARY_SSH_ADD": ['ssh-add', ],
+  }
+  #
+  for definition in config.Get("SSH_AGENTS"):
+    if not definition[0] or identity in definition[0]:
+      binary_checks["BINARY_SSH_AGENT"] = [definition[1]]
+      break
+  #
+  for definition in config.Get("SSH_ADDS"):
+    if not definition[0] or identity in definition[0]:
+      binary_checks["BINARY_SSH_ADD"] = [definition[1]]
+      break
+  #
+  AutodetectBinary(argv[0], config, binary_checks)
+  del binary_checks
 
   # Determine keys.
   keys = None
