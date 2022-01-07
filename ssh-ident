@@ -210,21 +210,26 @@ To have multiple identities, all I have to do is:
   # This is optional - dont' include any SSH_OPTIONS if you don't
   # need it.
   # Note that a separate ssh config file per identity is possible too.
-  # Otherwise, provides options to be passed to 'ssh' for specific
-  # identities.
-  SSH_OPTIONS = {
+  # Otherwise, provides options to be passed to the ssh command for
+  # specific identities and/or binaries. All fitting entries combined.
+  # First element is a list of identities, second element is a list of
+  # binaries and third element is the option string.
+  # An empty list means for all identities or all binaries.
+  SSH_OPTIONS = [
+    # As default pass UseRoaming=no to standard ssh binaries for all identities,
+    # due to CVE-2016-0777. Set SSH_OPTIONS to empty to disable this.
+    [ [], ['ssh', 'scp', 'sftp', ], "-oUseRoaming=no"],
+
     # Disable forwarding of the agent, but enable X forwarding,
-    # when using the work profile.
-    "work": "-Xa",
+    # when using the work or personal profile.
+    [["work", "personal", ], ["ssh", ], "-Xa"],
 
     # Always forward the agent when using the secret identity.
-    "secret": "-A",
-  }
+    [["secret", ], ["ssh", ], "-A"],
 
-  # Options to pass to ssh by default.
-  # If you don't specify anything, UserRoaming=no is passed, due
-  # to CVE-2016-0777. Leave it empty to disable this.
-  SSH_DEFAULT_OPTIONS = "-oUseRoaming=no"
+    # Make all commands verbose for "personal"
+    [["personal", ], [], "-v"],
+  ]
 
   # Which options to use by default if no match with SSH_ADD_OPTIONS
   # was found. Note that ssh-ident hard codes -t 7200 to prevent your
@@ -552,11 +557,18 @@ class Config(object):
       # List of binaries to not create new agents for
       "BINARIES_NO_NEW_AGENT": ['ssh-add', ],
 
-      # Dictionary with identity as a key, automatically adds
-      # the specified options to the ssh command run.
-      "SSH_OPTIONS": {},
-      # Additional options to append to ssh by default.
-      "SSH_DEFAULT_OPTIONS": "-oUseRoaming=no",
+      # List with multiple identities and ssh binaries as keys, automatically
+      # adds the specified options to the ssh command run (all fitting entries).
+      # First element is a list of identities, second element is a list of
+      # binaries and third element is the option string.
+      # An empty list means for all identities or all binaries.
+      # Replaces old SSH_DEFAULT_OPTIONS, just use [[], [], "options"].
+      "SSH_OPTIONS": [
+        [ [], ['ssh', 'scp', 'sftp', ], "-oUseRoaming=no"], ## replacement of old SSH_DEFAULT_OPTIONS default
+        #[ ['id1', 'id2', ], ['bin1', 'bin2', 'bin3', ], "-opt1 value1 -opt2"],
+      ],
+      #
+      "SSH_DEFAULT_OPTIONS": None, ## use replacement in SSH_OPTIONS
 
       # Complete path of full ssh binary to use. If not set, ssh-ident will
       # try to find the correct binary in BINARY_DIR if set, otherwise in PATH.
@@ -632,6 +644,39 @@ class Config(object):
           "config file or defaults".format(parameter), file=sys.stderr,
           loglevel=LOG_ERROR)
       sys.exit(2)
+
+    # Convert old format of SSH_DEFAULT_OPTIONS
+    if parameter in ("SSH_DEFAULT_OPTIONS"):
+      if result:
+        # Convert old format string, or wrongly used tuple, to list
+        if isinstance(result, tuple):
+          result = list(result)
+        elif not isinstance(result, list):
+          result = [[ [], [], result]]
+      else:
+        result = None
+
+    # Convert old format of SSH_OPTIONS (and add SSH_DEFAULT_OPTIONS)
+    if parameter in ("SSH_OPTIONS"):
+      if result:
+        # Convert old dictionary, or wrongly used tuple, to list
+        if isinstance(result, tuple):
+          result = list(result)
+        elif isinstance(result, dict):
+          new_result = []
+          for identity in result.keys():
+            new_result.append([[identity], [], result[identity]])
+          result = new_result
+      else:
+        result = []
+      # Add SSH_DEFAULT_OPTIONS
+      new_result = self.Get("SSH_DEFAULT_OPTIONS")
+      if new_result:
+        result.extend(new_result) ## already converted above
+      #
+      print("{0}: {1}".format(parameter, result),
+          file=sys.stderr,
+          loglevel=LOG_DEBUG)
 
     # Compile patterns for speed
     if parameter in ("PATTERN_KEYS", "PATTERN_PUBKEYS", "PATTERN_PRIVKEYS", "MATCH_PATH", "MATCH_ARGV"):
@@ -1078,9 +1123,11 @@ class AgentManager(object):
   def RunSSH(self, argv):
     """Execs ssh with the specified arguments."""
     additional_flags = ""
-    if self.binary in self.config.Get("BINARIES_SSH_CONFIG"): ## TODO: rework SSH_OPTIONS and SSH_DEFAULT_OPTIONS
-      additional_flags = self.config.Get("SSH_OPTIONS").get(
-          self.identity, self.config.Get("SSH_DEFAULT_OPTIONS"))
+    for definition in self.config.Get("SSH_OPTIONS"):
+      if not definition[0] or self.identity in definition[0]:
+        if not definition[1] or self.binary in definition[1]:
+          if definition[2]:
+            additional_flags += " {0}".format(definition[2])
     if (self.ssh_config):
       additional_flags += " -F {0}".format(self.ssh_config)
 

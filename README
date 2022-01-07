@@ -215,21 +215,26 @@ DESCRIPTION
       # This is optional - dont' include any SSH_OPTIONS if you don't
       # need it.
       # Note that a separate ssh config file per identity is possible too.
-      # Otherwise, provides options to be passed to 'ssh' for specific
-      # identities.
-      SSH_OPTIONS = {
+      # Otherwise, provides options to be passed to the ssh command for
+      # specific identities and/or binaries. All fitting entries combined.
+      # First element is a list of identities, second element is a list of
+      # binaries and third element is the option string.
+      # An empty list means for all identities or all binaries.
+      SSH_OPTIONS = [
+        # As default pass UseRoaming=no to standard ssh binaries for all identities,
+        # due to CVE-2016-0777. Set SSH_OPTIONS to empty to disable this.
+        [ [], ['ssh', 'scp', 'sftp', ], "-oUseRoaming=no"],
+
         # Disable forwarding of the agent, but enable X forwarding,
-        # when using the work profile.
-        "work": "-Xa",
+        # when using the work or personal profile.
+        [["work", "personal", ], ["ssh", ], "-Xa"],
 
         # Always forward the agent when using the secret identity.
-        "secret": "-A",
-      }
+        [["secret", ], ["ssh", ], "-A"],
 
-      # Options to pass to ssh by default.
-      # If you don't specify anything, UserRoaming=no is passed, due
-      # to CVE-2016-0777. Leave it empty to disable this.
-      SSH_DEFAULT_OPTIONS = "-oUseRoaming=no"
+        # Make all commands verbose for "personal"
+        [["personal", ], [], "-v"],
+      ]
 
       # Which options to use by default if no match with SSH_ADD_OPTIONS
       # was found. Note that ssh-ident hard codes -t 7200 to prevent your
