@@ -203,14 +203,22 @@ DESCRIPTION
 
       # This is optional - don't include any SSH_ADD_OPTIONS if you don't
       # need it.
-      SSH_ADD_OPTIONS = {
+      # Otherwise, provides options to be passed to the ssh-add command for
+      # specific identities and/or binaries. First fitting entry wins.
+      # First element is a list of identities, second element is a list of
+      # binaries and third element is the option string.
+      # An empty list means for all identities or all binaries.
+      SSH_ADD_OPTIONS = [
         # Regardless, ask for confirmation before using any of the
         # work keys.
-        "work": "-c",
+        [ ["work", ], [], "-c -t 3600"],
         # Forget about secret keys after ten minutes. ssh-ident will
-        # automatically ask you your passphrase again if they are needed.
-        "secret": "-t 600",
-      }
+        # automatically ask for the passphrase again if they are needed.
+        [ ["secret", ], [], "-t 600"],
+        # As default prevent keys remaining in memory for too long (>2h) for all
+        # identities and binaries. Set SSH_ADD_OPTIONS to empty to disable this.
+        [ [], [], "-t 7200"],
+      ]
 
       # This is optional - dont' include any SSH_OPTIONS if you don't
       # need it.
@@ -235,11 +243,6 @@ DESCRIPTION
         # Make all commands verbose for "personal"
         [["personal", ], [], "-v"],
       ]
-
-      # Which options to use by default if no match with SSH_ADD_OPTIONS
-      # was found. Note that ssh-ident hard codes -t 7200 to prevent your
-      # keys from remaining in memory for too long.
-      SSH_ADD_DEFAULT_OPTIONS = "-t 7200"
 
       # This is optional - don't include any SSH_AGENTS or SSH_ADDS if you
       # don't need it. Defaults are 'ssh-agent' and 'ssh-add'.

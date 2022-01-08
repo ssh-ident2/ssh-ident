@@ -198,14 +198,22 @@ To have multiple identities, all I have to do is:
 
   # This is optional - don't include any SSH_ADD_OPTIONS if you don't
   # need it.
-  SSH_ADD_OPTIONS = {
+  # Otherwise, provides options to be passed to the ssh-add command for
+  # specific identities and/or binaries. First fitting entry wins.
+  # First element is a list of identities, second element is a list of
+  # binaries and third element is the option string.
+  # An empty list means for all identities or all binaries.
+  SSH_ADD_OPTIONS = [
     # Regardless, ask for confirmation before using any of the
     # work keys.
-    "work": "-c",
+    [ ["work", ], [], "-c -t 3600"],
     # Forget about secret keys after ten minutes. ssh-ident will
-    # automatically ask you your passphrase again if they are needed.
-    "secret": "-t 600",
-  }
+    # automatically ask for the passphrase again if they are needed.
+    [ ["secret", ], ['other-ssh-add', ], "-t 600"],
+    # As default prevent keys remaining in memory for too long (>2h) for all
+    # identities and binaries. Set SSH_ADD_OPTIONS to empty to disable this.
+    [ [], [], "-t 7200"],
+  ]
 
   # This is optional - dont' include any SSH_OPTIONS if you don't
   # need it.
@@ -230,11 +238,6 @@ To have multiple identities, all I have to do is:
     # Make all commands verbose for "personal"
     [["personal", ], [], "-v"],
   ]
-
-  # Which options to use by default if no match with SSH_ADD_OPTIONS
-  # was found. Note that ssh-ident hard codes -t 7200 to prevent your
-  # keys from remaining in memory for too long.
-  SSH_ADD_DEFAULT_OPTIONS = "-t 7200"
 
   # This is optional - don't include any SSH_AGENTS or SSH_ADDS if you
   # don't need it. Defaults are 'ssh-agent' and 'ssh-add'.
@@ -607,12 +610,19 @@ class Config(object):
       "MATCH_PATH": [],
       "MATCH_ARGV": [],
 
-      # Dictionary with identity as a key, allows to specify
-      # per identity options when using ssh-add.
-      "SSH_ADD_OPTIONS": {},
-      # ssh-add default options. By default, don't keep a key longer
-      # than 2 hours.
-      "SSH_ADD_DEFAULT_OPTIONS": "-t 7200",
+      # List with multiple identities and ssh-add binaries as keys, automatically
+      # adds the specified options to the ssh-add command run (first fitting entry wins).
+      # First element is a list of identities, second element is a list of
+      # binaries and third element is the option string.
+      # An empty list means for all identities or all binaries.
+      # Replaces old SSH_ADD_DEFAULT_OPTIONS, just use [[], [], "options"].
+      # By default, don't keep a key longer than 2 hours.
+      "SSH_ADD_OPTIONS": [
+        #[ ['id1', 'id2', ], ['other-ssh-add', ], "-opt1 value1 -opt2"],
+        [ [], [], "-t 7200"], ## replacement of old SSH_ADD_DEFAULT_OPTIONS default
+      ],
+      #
+      "SSH_ADD_DEFAULT_OPTIONS": None, ## use replacement in SSH_ADD_OPTIONS
 
       # List with multiple identities as key, that defines the ssh-agent/ssh-add
       # binary to handle keys with (first fitting entry wins).
@@ -675,8 +685,8 @@ class Config(object):
           loglevel=LOG_ERROR)
       sys.exit(2)
 
-    # Convert old format of SSH_DEFAULT_OPTIONS
-    if parameter in ("SSH_DEFAULT_OPTIONS"):
+    # Convert old format of SSH_DEFAULT_OPTIONS/SSH_ADD_DEFAULT_OPTIONS
+    if parameter in ("SSH_DEFAULT_OPTIONS", "SSH_ADD_DEFAULT_OPTIONS"):
       if result:
         # Convert old format string, or wrongly used tuple, to list
         if isinstance(result, tuple):
@@ -686,8 +696,8 @@ class Config(object):
       else:
         result = None
 
-    # Convert old format of SSH_OPTIONS (and add SSH_DEFAULT_OPTIONS)
-    if parameter in ("SSH_OPTIONS"):
+    # Convert old format of SSH_OPTIONS/SSH_ADD_OPTIONS (and add SSH_DEFAULT_OPTIONS/SSH_ADD_DEFAULT_OPTIONS)
+    if parameter in ("SSH_OPTIONS", "SSH_ADD_OPTIONS"):
       if result:
         # Convert old dictionary, or wrongly used tuple, to list
         if isinstance(result, tuple):
@@ -699,10 +709,15 @@ class Config(object):
           result = new_result
       else:
         result = []
-      # Add SSH_DEFAULT_OPTIONS
-      new_result = self.Get("SSH_DEFAULT_OPTIONS")
-      if new_result:
-        result.extend(new_result) ## already converted above
+      # Add SSH_DEFAULT_OPTIONS/SSH_ADD_DEFAULT_OPTIONS
+      if parameter == "SSH_OPTIONS":
+        new_result = self.Get("SSH_DEFAULT_OPTIONS")
+        if new_result:
+          result.extend(new_result) ## already converted above
+      elif parameter == "SSH_ADD_OPTIONS":
+        new_result = self.Get("SSH_ADD_DEFAULT_OPTIONS")
+        if new_result:
+          result.append(new_result) ## already converted above
       #
       print("{0}: {1}".format(parameter, result),
           file=sys.stderr,
@@ -1025,11 +1040,18 @@ class AgentManager(object):
       keys: iterable of strings, each string a path to a key to load.
     """
     keys = " ".join(keys)
-    options = self.config.Get("SSH_ADD_OPTIONS").get(
-        self.identity, self.config.Get("SSH_ADD_DEFAULT_OPTIONS"))
+    runtime_name = self.config.Get("BINARY_SSH_ADD")
+    binary_runtime_name = os.path.basename(runtime_name)
+    options = ""
+    for definition in self.config.Get("SSH_ADD_OPTIONS"):
+      if not definition[0] or self.identity in definition[0]:
+        if not definition[1] or binary_runtime_name in definition[1]:
+          if definition[2]:
+            options += " {0}".format(definition[2])
+          break
     console = GetSessionTty()
     self.RunShellCommandInAgent(
-        self.agent_file, "{0} {1} {2}".format(self.config.Get("BINARY_SSH_ADD"), options, keys),
+        self.agent_file, "{0} {1} {2}".format(runtime_name, options, keys),
         stdout=console, stdin=console)
 
   def GetLoadedKeys(self):
