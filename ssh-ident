@@ -429,7 +429,6 @@ CREDITS
 from __future__ import print_function
 
 import collections
-import shutil
 import errno
 import fcntl
 import getpass
@@ -441,6 +440,20 @@ import subprocess
 import sys
 import termios
 import textwrap
+
+# Python 3.12+ will deprecate distutils, for distutils.spawn.find_executable() use shutil.which() from 3.3+ as defined in PEP 632 "Deprecate distutils module"
+# Python 3.10+ gives deprecation warnings about distutils
+import warnings
+try:
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    import distutils.spawn
+  def FindExecutable(executable, path=None):
+    return distutils.spawn.find_executable(executable, path=path)
+except:
+  import shutil
+  def FindExecutable(cmd, path=None):
+    return shutil.which(cmd, path=path)
 
 # constants so noone has deal with cryptic numbers
 LOG_CONSTANTS = {"LOG_ERROR": 1, "LOG_WARN": 2, "LOG_INFO": 3, "LOG_DEBUG": 4}
@@ -1296,7 +1309,7 @@ def AutodetectBinary(runtime_name, config, binary_checks):
   for config_name in list(binary_checks.keys()):
     for binary_name in binary_checks[config_name]:
       # Find an executable with the desired name.
-      binary_path = shutil.which(binary_name, path=search_path)
+      binary_path = FindExecutable(binary_name, path=search_path)
       if not binary_path:
         continue
       #
@@ -1390,9 +1403,9 @@ def main(argv):
   # which is not always the case. argv[0] may also just have the binary
   # name if found in a path.
   binary_path = os.path.realpath(
-    shutil.which(config.Get("BINARY_SSH")))
+    FindExecutable(config.Get("BINARY_SSH")))
   ssh_ident_path = os.path.realpath(
-    shutil.which(argv[0]))
+    FindExecutable(argv[0]))
   if binary_path == ssh_ident_path:
     message = textwrap.dedent("""\
     ssh-ident found '{0}' as the next command to run.
