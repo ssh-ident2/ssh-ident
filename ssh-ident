@@ -38,15 +38,15 @@ In any case, ssh-ident:
 Installation
 ============
 
-All you need to run ssh-ident is a standard installation of python >= 2.6,
-python > 3 is supported.
+All you need to run ssh-ident is a standard installation of python 2 (>= 2.6).
+Python 3 is supported, but newer versions may deprecate stuff and will fail.
 
 If your system has wget and are impatient to use it, you can install
 ssh-ident with two simple commands:
 
    mkdir -p ~/bin; wget -O ~/bin/ssh goo.gl/MoJuKB; chmod 0755 ~/bin/ssh
 
-   echo 'export PATH=~/bin:$PATH' >> ~/.bashrc
+   echo 'export PATH="${HOME}/bin:${PATH}"' >> ~/.bashrc
 
 Logout, login, and done. SSH should now invoke ssh-ident instead of the
 standard ssh.
@@ -82,13 +82,13 @@ to solve the problem:
    ssh-ident in a directory in your PATH before /usr/bin or /bin, similarly
    to what was described previously. For example, add to your .bashrc:
 
-    export PATH="~/bin:$PATH"
+    export PATH="${HOME}/bin:${PATH}"
 
    And run:
 
     ln -s /path/to/ssh-ident ~/bin/ssh
 
-   Make sure `echo $PATH` shows '~/bin' *before* '/usr/bin' or '/bin'. You
+   Make sure `echo ${PATH}` shows '~/bin' *before* '/usr/bin' or '/bin'. You
    can verify this is working as expected with `which ssh`, which should
    show ~/bin/ssh.
 
@@ -106,10 +106,10 @@ to solve the problem:
 
 2) Add a few more aliases in your .bashrc file, for example:
 
-    alias scp='BINARY_SSH=scp /path/to/ssh-ident'
-    alias rsync='BINARY_SSH=rsync /path/to/ssh-ident'
-    alias ssh-add="BINARY_SSH='ssh-add' \"/path/to/ssh-ident\""
-    alias ssh-agent="BINARY_SSH='ssh-agent' \"/path/to/ssh-ident\""
+    alias scp="BINARY_SSH='scp' '/path/to/ssh-ident'"
+    alias rsync="BINARY_SSH='rsync' '/path/to/ssh-ident'"
+    alias ssh-add="BINARY_SSH='ssh-add' '/path/to/ssh-ident'"
+    alias ssh-agent="BINARY_SSH='ssh-agent' '/path/to/ssh-ident'"
 
     ...
 
@@ -146,6 +146,21 @@ to solve the problem:
 
      BINARY_SSH="/usr/bin/ssh.ssh-ident"
 
+5) Indentities can also be used like a normal ssh-agent and helps in some
+   special cases, where programs use an ssh library and do not call the ssh
+   binaries.
+   Make sure the agent for the identity is running and keys are loaded,
+   either by a fake ssh call for this identity or via ssh-add -i and
+   loading the wanted key. After this just source the agent environment
+   file of the identity and execute the program.
+   That's the same way as using pure ssh-agent, where you also have to make
+   sure to have the correct environment variables set.
+   Use a subshell to not polute the normal environment.
+
+    ssh <parameters to trigger wanted identity>; # fake call via ssh-ident
+    ssh-add -i <identity> <key>; # add needed key explicitly via ssh-ident
+    ( . ~/.ssh/agents/agent-<identity>-${HOSTNAME} >/dev/null 2>/dev/null; <program that does not use the ssh commands>; )`
+
 
 Config file with multiple identities
 ====================================
@@ -161,11 +176,11 @@ To have multiple identities, all I have to do is:
   # contains the word "mod-xslt", the "personal" identity should be used.
   # This is optional - don't include any MATCH_PATH if you don't need it.
   MATCH_PATH = [
-    # (directory pattern, identity)
-    (r"mod-xslt", "personal"),
-    (r"ssh-ident", "personal"),
-    (r"opt/work", "work"),
-    (r"opt/private", "secret"),
+    # [directory pattern, identity]
+    [r"mod-xslt", "personal"],
+    [r"ssh-ident", "personal"],
+    [r"opt/work", "work"],
+    [r"opt/private", "secret"],
   ]
 
   # Specifies which identity to use depending on the arguments I'm running
@@ -176,18 +191,18 @@ To have multiple identities, all I have to do is:
   # identity has to be used. "ssh myhost.cweb.com" will have cweb in argv, and
   # the "personal" identity will be used.
   MATCH_ARGV = [
-    (r"cweb", "personal"),
-    (r"corp", "work"),
+    [r"cweb", "personal"],
+    [r"corp", "work"],
   ]
   # Another example: Choose an identity for git depending on the accessed
   # repository on GitHub (similar for GitLab, Bitbucket, etc.).
   # Recognize the elements with the host and the repository path to switch
   # between 'personal' and 'work' identity.
   MATCH_ARGV = [
-    (r"\s(git@)?github\.com\s.*'company\/.+\.git'", "work"),
-    (r"\s(git@)?github\.com\s.*'ccontavalli\/.+\.git'", "personal"),
-    (r"\s(git@)?gist\.github\.com\s.*'abcdef01234567890fedcba912345678\.git'", "work"),
-    (r"^(git@)?(gist\.)?github\.com$", "personal"),
+    [r"\s(git@)?github\.com\s.*'company\/.+\.git'", "work"],
+    [r"\s(git@)?github\.com\s.*'ccontavalli\/.+\.git'", "personal"],
+    [r"\s(git@)?gist\.github\.com\s.*'abcdef01234567890fedcba912345678\.git'", "work"],
+    [r"^(git@)?(gist\.)?github\.com$", "personal"],
   ]
 
   # Note that if no match is found, the DEFAULT_IDENTITY is used. This is
@@ -957,7 +972,7 @@ def GetSessionTty():
 
   have a tty associated, while the same command without -t will not.
 
-  When ssh is invoked by tools like git or rsyn, its stdin and stdout
+  When ssh is invoked by tools like git or rsync, its stdin and stdout
   is often tied to a file descriptor which is not a terminal, has
   the tool wants to provide the input and process the output.
 
@@ -1280,7 +1295,7 @@ def AutodetectBinary(runtime_name, config, binary_checks):
     message = textwrap.dedent("""\
     argv[0] ("{0}") is a relative path. This means that ssh-ident does
     not know its own directory, and can't exclude it from searching it
-    in $PATH:
+    in ${{PATH}}:
 
       PATH="{1}"
 
@@ -1314,7 +1329,7 @@ def AutodetectBinary(runtime_name, config, binary_checks):
         continue
       #
       config.Set(config_name, binary_path)
-      print("Will run '{0}' as {1} binary - detected from argv[0] and $PATH"
+      print("Will run '{0}' as {1} binary - detected from argv[0] and ${{PATH}}"
             .format(config.Get(config_name), binary_checks[config_name][-1]), loglevel=LOG_DEBUG)
       del binary_checks[config_name]
       break
@@ -1330,7 +1345,7 @@ def AutodetectBinary(runtime_name, config, binary_checks):
   #
   message = textwrap.dedent("""\
   ssh-ident was invoked in place of the binary {0} (determined from argv[0]).
-  None of {1} could be found in $PATH.
+  None of {1} could be found in ${{PATH}}.
 
     PATH="{2}"
 
