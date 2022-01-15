@@ -121,10 +121,13 @@ to solve the problem:
    you expect to use with ssh-ident, you may prefer method 1), or you will
    need to update the script accordingly.
 
-   For the ssh-agent and ssh-add aliases the first parameter can be
-   '-i <identity>' to use them with a non-default identity.
-   Note that a new agent will not be created for an ssh-add call, and keys
-   will not be loaded for ssh-agent and ssh-add calls.
+   For the ssh-agent and ssh-add binaries the first parameter can be
+   '-i/-I <identity>' to use them with a non-default identity.
+   Note that with '-i' (lowercase) no keys will be loaded for ssh-agent
+   and ssh-add calls.
+
+     BINARY_SSH='ssh-agent' /path/to/ssh-ident <-i|-I> <identity> ...
+     BINARY_SSH='ssh-add' /path/to/ssh-ident <-i|-I> <identity> ...
 
    Additionally the identity can be defined via SSH_IDENT_ID='<identity>'.
 
@@ -146,20 +149,18 @@ to solve the problem:
 
      BINARY_SSH="/usr/bin/ssh.ssh-ident"
 
-5) Indentities can also be used like a normal ssh-agent and helps in some
+5) Identities can also be used like a normal ssh-agent and helps in some
    special cases, where programs use an ssh library and do not call the ssh
    binaries.
-   Make sure the agent for the identity is running and keys are loaded,
-   either by a fake ssh call for this identity or via ssh-add -i and
-   loading the wanted key. After this just source the agent environment
-   file of the identity and execute the program.
+   Make sure the agent for the identity is running and keys are loaded via
+   ssh-add -I (uppercase). After this just source the agent environment file
+   of the identity and execute the program.
    That's the same way as using pure ssh-agent, where you also have to make
    sure to have the correct environment variables set.
    Use a subshell to not polute the normal environment.
 
-    ssh <parameters to trigger wanted identity>; # fake call via ssh-ident
-    ssh-add -i <identity> <key>; # add needed key explicitly via ssh-ident
-    ( . ~/.ssh/agents/agent-<identity>-${HOSTNAME} >/dev/null 2>/dev/null; <program that does not use the ssh commands>; )`
+     BINARY_SSH='ssh-add' /path/to/ssh-ident -I <identity>; # uppercase -I to load all keys if necessary
+     ( . ~/.ssh/agents/agent-<identity>-${HOSTNAME} >/dev/null 2>/dev/null; <program that does not use the ssh binaries>; )`
 
 
 Config file with multiple identities
@@ -399,6 +400,21 @@ You can also redefine:
 To point somewhere else if you so desire.
 
 
+TROUBLESHOOTING
+===============
+
+If something does not work as wanted then enable verbose mode for the
+target binary, for example '-v' for ssh.
+Additionally remove the keys for the identity and set ssh-ident's
+VERBOSITY to LOG_DEBUG.
+
+  BINARY_SSH='ssh-add' /path/to/ssh-ident -i <identity> -D; # delete all keys from agent of identity
+  VERBOSITY='LOG_DEBUG' ssh -vT git@github.com "test 'my-git-user-1/test-repo.git'"
+
+Check that the correct keys are available for each identity (public and
+private) and that the configuration matches the scenario (binary, parameters, etc.).
+
+
 BUILDING A DEBIAN PACKAGE
 =========================
 
@@ -595,14 +611,14 @@ class Config(object):
       # List of binaries compatible with ssh's -o[ ]BatchMode=...
       "BINARIES_SSH_BATCHMODE": ['ssh', 'scp', ],
 
-      # List of binaries with virtual first parameter -i <identity> via ssh-ident
+      # List of binaries with virtual first parameter -i/-I <identity> via ssh-ident
       "BINARIES_ARGV1_IDENTITY": ['ssh-pageant', 'ssh-agent', 'ssh-add', ],
 
-      # List of binaries to not load keys for
+      # List of binaries to not load keys for with virtual first parameter '-i' (lowercase)
       "BINARIES_NO_KEYS": ['ssh-pageant', 'ssh-agent', 'ssh-add', ],
 
-      # List of binaries to not create new agents for
-      "BINARIES_NO_NEW_AGENT": ['ssh-add', ],
+      # List of binaries to not create new agent for
+      "BINARIES_NO_NEW_AGENT": [],
 
       # List with multiple identities and ssh binaries as keys, automatically
       # adds the specified options to the ssh command run (all fitting entries).
@@ -946,7 +962,7 @@ def FindSSHConfig(identity, config):
       if os.path.isfile(sshconfig) and pattern.search(sshconfig):
         return sshconfig
 
-  return False
+  return None
 
 
 def GetSessionTty():
@@ -1364,7 +1380,9 @@ def ParseCommandLine(argv, config, binary):
   extra = {}
 
   if binary in config.Get("BINARIES_ARGV1_IDENTITY"):
-    if len(argv) > 1 and argv[1] == '-i':
+    if len(argv) > 1 and (argv[1] == '-i' or argv[1] == '-I'):
+      if argv[1] == '-I':
+        extra["loadkeys"] = True
       extra["identity"] = argv[2]
       del argv[2]
       del argv[1]
@@ -1434,9 +1452,14 @@ def main(argv):
     sys.exit(255)
   #
   binary = os.path.basename(config.Get("BINARY_SSH"))
+  loadkeys = True
+  if binary in config.Get("BINARIES_NO_KEYS"):
+    loadkeys = False
 
   # Parse command line and handle special cases (OpenSSH batch mode, virtual parameters, etc.).
   extra = ParseCommandLine(argv, config, binary)
+  if "loadkeys" in extra:
+    loadkeys = extra["loadkeys"]
 
   # Determine identity.
   identity = None
@@ -1478,11 +1501,11 @@ def main(argv):
 
   # Determine keys.
   keys = None
-  if not binary in config.Get("BINARIES_NO_KEYS"):
+  if loadkeys:
     keys = FindKeys(identity, config)
 
   # Determine ssh config.
-  sshconfig = False
+  sshconfig = None
   if binary in config.Get("BINARIES_SSH_CONFIG"):
     sshconfig = FindSSHConfig(identity, config)
 
