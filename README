@@ -217,6 +217,10 @@ DESCRIPTION
       # need it.
       # DEFAULT_IDENTITY = "foo"
 
+      # Set this to the name of an environment variable to force
+      # the identity to the value of the variable
+      # "ENVIRONMENT_IDENTITY": 'SSHIDENTITY',
+
       # This is optional - don't include any SSH_ADD_OPTIONS if you don't
       # need it.
       # Otherwise, provides options to be passed to the ssh-add command for
@@ -305,7 +309,6 @@ DESCRIPTION
         $ ${EDITOR} ~/.ssh/identities/secret/config
 
         ...
-
 
     Now if I run:
 

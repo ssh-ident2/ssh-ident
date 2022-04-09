@@ -649,6 +649,10 @@ class Config(object):
       # the current working directory and/or argv.
       "DEFAULT_IDENTITY": "$USER",
 
+      # Set this to the name of an environment variable to force
+      # the identity to the value of the variable
+      "ENVIRONMENT_IDENTITY": '',
+
       # Those should really be overridden by the user. Look
       # at the documentation for more details.
       "MATCH_PATH": [],
@@ -847,6 +851,7 @@ def FindIdentity(argv, config):
   """
   paths = set([os.getcwd(), os.path.abspath(os.getcwd()), os.path.normpath(os.getcwd())])
   return (
+      os.environ.get(config.Get("ENVIRONMENT_IDENTITY")) or
       FindIdentityInList(argv, config.Get("MATCH_ARGV"), True, "MATCH_ARGV") or
       FindIdentityInList(paths, config.Get("MATCH_PATH"), False, "MATCH_PATH") or
       config.Get("DEFAULT_IDENTITY"))
