@@ -1456,7 +1456,7 @@ def main(argv):
 
     Please use BINARY_DIR, or BINARY_SSH plus BINARY_SSH_AGENT plus
     BINARY_SSH_ADD, or change the way ssh-ident is invoked
-    (eg, a different argv[0]) to makeit work correctly.\
+    (eg, a different argv[0]) to make it work correctly.\
     """)
     print(message.format(config.Get("BINARY_SSH"), argv[0]), loglevel=LOG_ERROR)
     sys.exit(255)
