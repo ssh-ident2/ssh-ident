@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # vim: tabstop=2 shiftwidth=2 expandtab
 """Start and use ssh-agent and load identities as necessary.
 
@@ -160,7 +160,7 @@ to solve the problem:
    Use a subshell to not polute the normal environment.
 
      BINARY_SSH='ssh-add' /path/to/ssh-ident -I <identity>; # uppercase -I to load all keys if necessary
-     ( . ~/.ssh/agents/agent-<identity>-${HOSTNAME} >/dev/null 2>/dev/null; <program that does not use the ssh binaries>; )`
+     ( . ~/.config/ssh-ident/agents/agent-<identity>-${HOSTNAME} >/dev/null 2>/dev/null; <program that does not use the ssh binaries>; )`
 
 
 Config file with multiple identities
@@ -168,8 +168,8 @@ Config file with multiple identities
 
 To have multiple identities, all I have to do is:
 
-1) create a ~/.ssh-ident file. In this file, I need to tell ssh-ident which
-   identities to use and when. The file should look something like:
+1) create a ~/.config/ssh-ident/config file. In this file, I need to tell ssh-
+  ident which identities to use and when. The file should look something like:
 
   # Specifies which identity to use depending on the path I'm running ssh
   # from.
@@ -278,26 +278,26 @@ To have multiple identities, all I have to do is:
 2) Create the directory where all the identities and agents
    will be kept:
 
-    $ mkdir -p ~/.ssh/identities; chmod u=rwX,go= -R ~/.ssh
+    $ mkdir -p ~/.config/ssh-ident/identities; chmod u=rwX,go= -R ~/.ssh
 
 3) Create a directory for each identity, for example:
 
-    $ mkdir -p ~/.ssh/identities/personal
-    $ mkdir -p ~/.ssh/identities/work
-    $ mkdir -p ~/.ssh/identities/secret
+    $ mkdir -p ~/.config/ssh-ident/identities/personal
+    $ mkdir -p ~/.config/ssh-ident/identities/work
+    $ mkdir -p ~/.config/ssh-ident/identities/secret
 
 4) Generate (or copy) keys for those identities:
 
     # Default keys are for my personal account
-    $ cp ~/.ssh/id_rsa* ~/.ssh/identities/personal
+    $ cp ~/.ssh/id_rsa* ~/.config/ssh-ident/identities/personal
 
     # Generate keys to be used for work only, rsa
-    $ ssh-keygen -t rsa -b 4096 -f ~/.ssh/identities/work/id_rsa
+    $ ssh-keygen -t rsa -b 4096 -f ~/.config/ssh-ident/identities/work/id_rsa
 
 5) Optionally create a separate ssh config file for those identities that
    need special ssh settings in general or for specific hosts:
 
-    $ ${EDITOR} ~/.ssh/identities/secret/config
+    $ ${EDITOR} ~/.config/ssh-ident/identities/secret/config
 
     ...
 
@@ -309,9 +309,9 @@ Now if I run:
 ssh-ident will be invoked instead, and:
 
   1) check ssh argv, determine that the "work" identity has to be used.
-  2) look in ~/.ssh/agents, for a "work" agent loaded. If there is no
+  2) look in ~/.config/ssh-ident/agents, for a "work" agent loaded. If there is no
      agent, it will prepare one.
-  3) look in ~/.ssh/identities/work/* for a list of keys to load for this
+  3) look in ~/.config/ssh-ident/identities/work/* for a list of keys to load for this
      identity. It will try to load any key that is not already loaded in
      the agent.
   4) finally run ssh with the environment setup such that it will have
@@ -394,8 +394,8 @@ Note: As the ".pub" and ".key" patterns come first, files that also have
 
 You can also redefine:
 
-      DIR_IDENTITIES = "$HOME/.ssh/identities"
-      DIR_AGENTS = "$HOME/.ssh/agents"
+      DIR_IDENTITIES = "$HOME/.config/ssh-ident/identities"
+      DIR_AGENTS = "$HOME/.config/ssh-ident/agents"
 
 To point somewhere else if you so desire.
 
@@ -579,12 +579,12 @@ class Config(object):
 
   defaults = {
       # Where to find the per-user configuration.
-      "FILE_USER_CONFIG": "$HOME/.ssh-ident",
+      "FILE_USER_CONFIG": "$XDG_CONFIG_HOME/ssh-ident/config",
 
       # Where to find all the identities for the user.
-      "DIR_IDENTITIES": "$HOME/.ssh/identities",
+      "DIR_IDENTITIES": "$HOME/.config/ssh-ident/identities",
       # Where to keep the information about each running agent.
-      "DIR_AGENTS": "$HOME/.ssh/agents",
+      "DIR_AGENTS": "$HOME/.config/ssh-ident/agents",
 
       # How to identify key files in the identities directory.
       "PATTERN_KEYS": [
@@ -699,20 +699,30 @@ class Config(object):
   def Load(self):
     """Load configurations from the default user file."""
     path = self.Get("FILE_USER_CONFIG")
-    variables = {}
+    exec_scope = {}
     try:
-      exec(compile(open(path).read(), path, 'exec'), LOG_CONSTANTS, variables)
+      exec(compile(open(path).read(), path, 'exec'), LOG_CONSTANTS, exec_scope)
     except IOError:
       return self
-    self.values = variables
+    self.values = exec_scope
     return self
 
   @staticmethod
   def Expand(value):
     """Expand environment variables or ~ in string parameters."""
     if isinstance(value, str):
-      return os.path.expanduser(os.path.expandvars(value))
-    return value
+      expanded = os.path.expanduser(os.path.expandvars(value))
+      # If expainsion of $XDG_CONFIG_HOME fails, default to $HOME/.config.
+      # > $XDG_CONFIG_HOME defines the base directory relative to which user-specific configuration
+      # > files should be stored. If $XDG_CONFIG_HOME is either not set or empty, a default equal to
+      # > $HOME/.config should be used.
+      # > -- https://specifications.freedesktop.org/basedir-spec/latest/ar01s03.html
+      if '$XDG_CONFIG_HOME' in expanded:
+        return os.path.expandvars(expanded.replace('$XDG_CONFIG_HOME', '$HOME/.config'))
+      else:
+        return expanded
+    else:
+      return value
 
   def Get(self, parameter):
     """Returns the value of a parameter, or causes the script to exit."""
@@ -1446,7 +1456,7 @@ def main(argv):
 
     Please use BINARY_DIR, or BINARY_SSH plus BINARY_SSH_AGENT plus
     BINARY_SSH_ADD, or change the way ssh-ident is invoked
-    (eg, a different argv[0]) to makeit work correctly.\
+    (eg, a different argv[0]) to make it work correctly.\
     """)
     print(message.format(config.Get("BINARY_SSH"), argv[0]), loglevel=LOG_ERROR)
     sys.exit(255)
